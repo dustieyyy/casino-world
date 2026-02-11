@@ -1,1 +1,613 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Casino World • iPhone Touch FPS</title>
+  <style>
+    html,body{margin:0;height:100%;overflow:hidden;background:#000;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;touch-action:none}
+    #hud{
+      position:fixed;left:10px;top:10px;z-index:10;color:#fff;
+      background:rgba(0,0,0,.55);padding:10px 12px;border-radius:12px;
+      border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(6px);
+      max-width:88vw;line-height:1.25;font-size:14px;
+    }
+    #status{opacity:.92;margin-top:4px}
+    #msg{
+      position:fixed;left:50%;bottom:86px;transform:translateX(-50%);
+      color:#fff;background:rgba(0,0,0,.6);padding:9px 12px;border-radius:12px;
+      border:1px solid rgba(255,255,255,.14);z-index:10;font-size:14px;
+      opacity:0;transition:opacity .18s ease;max-width:88vw;text-align:center;
+    }
+    #reticle{
+      position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+      width:12px;height:12px;z-index:10;pointer-events:none;
+    }
+    #reticle:before,#reticle:after{content:"";position:absolute;background:rgba(255,255,255,.92)}
+    #reticle:before{left:5px;top:0;width:2px;height:12px}
+    #reticle:after{left:0;top:5px;width:12px;height:2px}
 
+    #controls{position:fixed;inset:0;z-index:15;pointer-events:none}
+    .pad{
+      position:fixed;bottom:22px;width:150px;height:150px;border-radius:999px;
+      background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+      backdrop-filter:blur(6px);
+      pointer-events:auto;
+    }
+    #movePad{left:18px}
+    #lookPad{right:18px;opacity:.06;border-color:rgba(255,255,255,.06)}
+    #stick{
+      position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+      width:60px;height:60px;border-radius:999px;background:rgba(255,255,255,.12);
+      border:1px solid rgba(255,255,255,.16);
+    }
+    .btn{
+      position:fixed;right:22px;bottom:190px;z-index:16;
+      width:76px;height:76px;border-radius:18px;
+      background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.14);
+      color:#fff;font-size:16px;font-weight:700;
+      backdrop-filter:blur(6px);
+      pointer-events:auto;
+    }
+    #jumpBtn{right:112px;bottom:190px}
+    #sprintBtn{right:22px;bottom:280px;font-size:13px;font-weight:600}
+    #overlay{
+      position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+      background:radial-gradient(ellipse at center, rgba(0,0,0,.62), rgba(0,0,0,.92));
+      z-index:30;color:#fff;text-align:center;padding:24px;
+    }
+    #overlay .card{
+      max-width:650px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);
+      border-radius:16px;padding:18px 18px 16px;box-shadow:0 16px 60px rgba(0,0,0,.55);
+      backdrop-filter:blur(8px);
+    }
+    #overlay h1{margin:0 0 6px;font-size:20px}
+    #overlay p{margin:8px 0;opacity:.92}
+    #overlay button{
+      border:0;padding:12px 16px;border-radius:12px;font-size:16px;cursor:pointer;
+    }
+    #overlay .small{font-size:13px;opacity:.85;margin-top:10px}
+    canvas{display:block}
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <div><b>Casino World</b> <span style="opacity:.8">• iPhone touch build</span></div>
+    <div id="status">Tap Start.</div>
+    <div style="opacity:.9;margin-top:6px;font-size:13px">
+      Move: left joystick • Look: swipe right side • Interact: <b>USE</b> • Jump: <b>JUMP</b> • Sprint: <b>SPRINT</b>
+    </div>
+  </div>
+  <div id="reticle"></div>
+  <div id="msg"></div>
+
+  <div id="overlay">
+    <div class="card">
+      <h1>Enter the Casino Floor</h1>
+      <p>Touch controls (built for iPhone). Walk up to a slot and tap <b>USE</b>.</p>
+      <button id="startBtn">Start</button>
+      <div class="small">Tip: if performance is choppy, turn off Low Power Mode.</div>
+    </div>
+  </div>
+
+  <div id="controls">
+    <div id="movePad" class="pad"><div id="stick"></div></div>
+    <div id="lookPad" class="pad"></div>
+    <button id="useBtn" class="btn">USE</button>
+    <button id="jumpBtn" class="btn">JUMP</button>
+    <button id="sprintBtn" class="btn">SPRINT</button>
+  </div>
+
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script>
+    const statusEl = document.getElementById("status");
+    const msgEl = document.getElementById("msg");
+    const overlayEl = document.getElementById("overlay");
+    const startBtn = document.getElementById("startBtn");
+
+    function toast(text, ms=1200){
+      msgEl.textContent = text;
+      msgEl.style.opacity = "1";
+      clearTimeout(toast._t);
+      toast._t = setTimeout(()=> msgEl.style.opacity = "0", ms);
+    }
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x07070a, 8, 150);
+
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.08, 400);
+    camera.position.set(0, 1.65, 6);
+
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(new THREE.HemisphereLight(0x9aa0ff, 0x2a2a2a, 0.75));
+    const key = new THREE.DirectionalLight(0xffffff, 0.65);
+    key.position.set(8,14,10);
+    key.castShadow = true;
+    key.shadow.mapSize.set(1024,1024);
+    scene.add(key);
+
+    const ceilingLights = [];
+    function addCeilingPanel(x, z){
+      const rect = new THREE.RectAreaLight(0x8cf7ff, 1.2, 3.5, 1.2);
+      rect.position.set(x, 3.2, z);
+      rect.rotation.x = -Math.PI/2;
+      scene.add(rect);
+      ceilingLights.push(rect);
+
+      const g = new THREE.PlaneGeometry(3.5, 1.2);
+      const m = new THREE.MeshBasicMaterial({ color: 0x43c6d9, transparent:true, opacity:0.22 });
+      const p = new THREE.Mesh(g, m);
+      p.position.copy(rect.position);
+      p.rotation.copy(rect.rotation);
+      scene.add(p);
+    }
+
+    const interactables = [];
+    const solidColliders = [];
+
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(90,90),
+      new THREE.MeshStandardMaterial({ color:0x1b1b22, roughness:0.95, metalness:0.05 })
+    );
+    floor.rotation.x = -Math.PI/2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    const tileGroup = new THREE.Group();
+    const tileGeo = new THREE.PlaneGeometry(2.2,2.2);
+    for (let x=-20; x<=20; x+=2.4){
+      for (let z=-20; z<=20; z+=2.4){
+        const hue = ((x*0.13 + z*0.19) % 1 + 1) % 1;
+        const c = new THREE.Color().setHSL(hue, 0.35, 0.12);
+        const mat = new THREE.MeshStandardMaterial({ color:c, roughness:1, metalness:0 });
+        const t = new THREE.Mesh(tileGeo, mat);
+        t.rotation.x = -Math.PI/2;
+        t.position.set(x, 0.01, z);
+        tileGroup.add(t);
+      }
+    }
+    scene.add(tileGroup);
+
+    function addWall(x, z, w, h, d){
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(w,h,d),
+        new THREE.MeshStandardMaterial({ color:0x111116, roughness:0.9, metalness:0.15 })
+      );
+      m.position.set(x, h/2, z);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      scene.add(m);
+      solidColliders.push(m);
+      return m;
+    }
+
+    addWall(0, -24.8, 80, 3.5, 1.0);
+    addWall(0,  24.8, 80, 3.5, 1.0);
+    addWall(-24.8, 0, 1.0, 3.5, 80);
+    addWall( 24.8, 0, 1.0, 3.5, 80);
+
+    for (let x=-18; x<=18; x+=6){
+      for (let z=-18; z<=18; z+=6){
+        addCeilingPanel(x, z);
+      }
+    }
+
+    const pillarGeo = new THREE.CylinderGeometry(0.45, 0.55, 3.2, 18);
+    const pillarMat = new THREE.MeshStandardMaterial({ color:0x0f0f14, roughness:0.7, metalness:0.25 });
+    for (let x=-12; x<=12; x+=6){
+      for (let z=-12; z<=12; z+=6){
+        const p = new THREE.Mesh(pillarGeo, pillarMat);
+        p.position.set(x, 1.6, z);
+        p.castShadow = true;
+        p.receiveShadow = true;
+        scene.add(p);
+        solidColliders.push(p);
+      }
+    }
+
+    function makeSlotMachine(x, z, id){
+      const g = new THREE.Group();
+
+      const base = new THREE.Mesh(
+        new THREE.BoxGeometry(1.1, 1.2, 0.85),
+        new THREE.MeshStandardMaterial({ color:0x20202a, roughness:0.6, metalness:0.35 })
+      );
+      base.position.set(0, 0.6, 0);
+      base.castShadow = true; base.receiveShadow = true;
+      g.add(base);
+
+      const topper = new THREE.Mesh(
+        new THREE.BoxGeometry(1.1, 0.55, 0.35),
+        new THREE.MeshStandardMaterial({ color:0x2b2b36, roughness:0.5, metalness:0.45 })
+      );
+      topper.position.set(0, 1.45, -0.15);
+      topper.castShadow = true;
+      g.add(topper);
+
+      const screen = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.82, 0.52),
+        new THREE.MeshBasicMaterial({ color:0x001a1f })
+      );
+      screen.position.set(0, 1.0, -0.43);
+      g.add(screen);
+
+      const leds = [];
+      const ledGeo = new THREE.SphereGeometry(0.04, 8, 8);
+      for (let i=0;i<10;i++){
+        const ledMat = new THREE.MeshStandardMaterial({ color:0xffffff, emissive:0x00d0ff, emissiveIntensity:0.6 });
+        const led = new THREE.Mesh(ledGeo, ledMat);
+        const t = i/9;
+        led.position.set(-0.55 + 1.1*t, 1.75, -0.35);
+        g.add(led);
+        leds.push(led);
+      }
+
+      g.position.set(x, 0, z);
+      scene.add(g);
+
+      const collider = new THREE.Mesh(
+        new THREE.BoxGeometry(1.2, 2.0, 1.0),
+        new THREE.MeshBasicMaterial({ visible:false })
+      );
+      collider.position.set(x, 1.0, z);
+      scene.add(collider);
+      solidColliders.push(collider);
+
+      const hit = new THREE.Mesh(
+        new THREE.BoxGeometry(1.35, 2.1, 1.2),
+        new THREE.MeshBasicMaterial({ visible:false })
+      );
+      hit.position.set(x, 1.0, z);
+      scene.add(hit);
+
+      const state = { on:false, spin:false, t:0 };
+
+      const machine = {
+        type:"slot", id, hit, state,
+        setOn(v){
+          state.on = v;
+          screen.material.color.set(v ? 0x003843 : 0x001a1f);
+          leds.forEach((led, idx)=>{
+            led.material.emissive.set(v ? (idx%2?0xff2bd6:0x00d0ff) : 0x001a1f);
+            led.material.emissiveIntensity = v ? 0.9 : 0.15;
+          });
+        },
+        interact(){
+          if (!state.on){ this.setOn(true); toast(`Slot ${id}: POWER ON`); return; }
+          state.spin = true; state.t = 0; toast(`Slot ${id}: SPIN!`);
+        },
+        update(dt){
+          if (!state.spin) return;
+          state.t += dt;
+          const flick = 0.5 + 0.5*Math.sin(state.t*18);
+          screen.material.color.setHSL(0.52 + 0.12*Math.sin(state.t*9), 1.0, 0.18 + 0.10*flick);
+          g.rotation.y = 0.02*Math.sin(state.t*20);
+          topper.position.y = 1.45 + 0.03*Math.sin(state.t*22);
+          if (state.t > 1.5){
+            state.spin = false;
+            g.rotation.y = 0;
+            topper.position.y = 1.45;
+            const win = Math.random() < 0.18;
+            toast(win ? `Slot ${id}: 🎉 JACKPOT (kinda)` : `Slot ${id}: Try again`);
+          }
+        }
+      };
+      machine.setOn(false);
+      interactables.push(machine);
+      return machine;
+    }
+
+    function makeDoor(x, z){
+      const frame = new THREE.Mesh(
+        new THREE.BoxGeometry(2.4, 2.6, 0.22),
+        new THREE.MeshStandardMaterial({ color:0x14141c, roughness:0.6, metalness:0.25 })
+      );
+      frame.position.set(x, 1.3, z);
+      frame.castShadow = true;
+      scene.add(frame);
+      solidColliders.push(frame);
+
+      const panel = new THREE.Mesh(
+        new THREE.BoxGeometry(2.0, 2.25, 0.12),
+        new THREE.MeshStandardMaterial({ color:0x1e1e2a, roughness:0.45, metalness:0.35, emissive:0x080808 })
+      );
+      panel.position.set(x, 1.15, z+0.04);
+      panel.castShadow = true;
+      scene.add(panel);
+
+      const hit = new THREE.Mesh(
+        new THREE.BoxGeometry(2.6, 2.7, 0.6),
+        new THREE.MeshBasicMaterial({ visible:false })
+      );
+      hit.position.set(x, 1.3, z);
+      scene.add(hit);
+
+      const state = { open:false };
+      const door = {
+        type:"door", id:"VIP", hit, state,
+        interact(){ state.open = !state.open; toast(state.open ? "VIP Door: OPEN" : "VIP Door: CLOSED"); },
+        update(dt){
+          const target = state.open ? 1.15 : 0;
+          panel.position.x += (x + target - panel.position.x) * Math.min(1, dt*6.5);
+          panel.material.emissiveIntensity = state.open ? 0.8 : 0.15;
+          panel.material.emissive.set(state.open ? 0x1b0055 : 0x080808);
+        }
+      };
+      interactables.push(door);
+      return door;
+    }
+
+    function makeLightSwitch(x, z){
+      const box = new THREE.Mesh(
+        new THREE.BoxGeometry(0.32, 0.42, 0.12),
+        new THREE.MeshStandardMaterial({ color:0x20202a, roughness:0.7, metalness:0.2, emissive:0x090909 })
+      );
+      box.position.set(x, 1.3, z);
+      box.castShadow = true;
+      scene.add(box);
+
+      const hit = new THREE.Mesh(
+        new THREE.BoxGeometry(0.7, 0.8, 0.7),
+        new THREE.MeshBasicMaterial({ visible:false })
+      );
+      hit.position.set(x, 1.3, z);
+      scene.add(hit);
+
+      const state = { on:true };
+      const sw = {
+        type:"switch", id:"Lights", hit, state,
+        interact(){
+          state.on = !state.on;
+          const intensity = state.on ? 1.2 : 0.35;
+          ceilingLights.forEach(l => l.intensity = intensity);
+          box.material.emissive.set(state.on ? 0x00ffb2 : 0x090909);
+          toast(state.on ? "Ceiling Lights: ON" : "Ceiling Lights: DIM");
+        },
+        update(){}
+      };
+      interactables.push(sw);
+      return sw;
+    }
+
+    let sid = 1;
+    const rows = [
+      { z: -8, x0: -16, x1: 16, step: 3.0 },
+      { z: -2, x0: -16, x1: 16, step: 3.0 },
+      { z:  4, x0: -16, x1: 16, step: 3.0 },
+      { z: 10, x0: -16, x1: 16, step: 3.0 },
+    ];
+    rows.forEach(r=>{ for (let x=r.x0; x<=r.x1; x+=r.step) makeSlotMachine(x, r.z, sid++); });
+
+    function addTable(x, z){
+      const top = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.25, 1.25, 0.18, 22),
+        new THREE.MeshStandardMaterial({ color:0x0f3b2e, roughness:0.75, metalness:0.1, emissive:0x00100c, emissiveIntensity:0.3 })
+      );
+      top.position.set(x, 0.95, z);
+      top.castShadow = true;
+      scene.add(top);
+
+      const base = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.28, 0.48, 0.9, 14),
+        new THREE.MeshStandardMaterial({ color:0x1b1b22, roughness:0.7, metalness:0.25 })
+      );
+      base.position.set(x, 0.45, z);
+      base.castShadow = true;
+      scene.add(base);
+
+      const col = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.35, 1.35, 1.0, 12),
+        new THREE.MeshBasicMaterial({ visible:false })
+      );
+      col.position.set(x, 0.5, z);
+      scene.add(col);
+      solidColliders.push(col);
+    }
+    for (let i=0;i<6;i++) addTable(-10 + i*4, 18);
+
+    makeDoor(0, -24.3);
+    makeLightSwitch(-23.4, -20);
+
+    const player = { pos:new THREE.Vector3(0,1.65,6), velY:0, canJump:false, radius:0.35, yaw:0, pitch:0 };
+    camera.position.copy(player.pos);
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.far = 2.1;
+
+    function getInteractTarget(){
+      raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+      const hits = raycaster.intersectObjects(interactables.map(i=>i.hit), false);
+      if (!hits.length) return null;
+      const hitObj = hits[0].object;
+      return interactables.find(i => i.hit === hitObj) || null;
+    }
+
+    function collideAndSlide(nextPos){
+      const pos = nextPos.clone();
+      pos.x = Math.max(-23.5, Math.min(23.5, pos.x));
+      pos.z = Math.max(-23.5, Math.min(23.5, pos.z));
+
+      for (const obj of solidColliders){
+        const box = new THREE.Box3().setFromObject(obj);
+        box.min.x -= player.radius; box.min.z -= player.radius;
+        box.max.x += player.radius; box.max.z += player.radius;
+
+        if (pos.x >= box.min.x && pos.x <= box.max.x && pos.z >= box.min.z && pos.z <= box.max.z){
+          const penLeft = pos.x - box.min.x;
+          const penRight = box.max.x - pos.x;
+          const penBack = pos.z - box.min.z;
+          const penFront = box.max.z - pos.z;
+
+          const minPen = Math.min(penLeft, penRight, penBack, penFront);
+          if (minPen === penLeft) pos.x = box.min.x;
+          else if (minPen === penRight) pos.x = box.max.x;
+          else if (minPen === penBack) pos.z = box.min.z;
+          else pos.z = box.max.z;
+        }
+      }
+      return pos;
+    }
+
+    const movePad = document.getElementById("movePad");
+    const stick = document.getElementById("stick");
+    let moveActive = false;
+    let moveBase = { x:0, y:0 };
+    let moveVec = { x:0, y:0 };
+
+    function setStick(dx, dy){
+      const max = 46;
+      const len = Math.hypot(dx, dy);
+      const k = len > max ? max/len : 1;
+      const sx = dx*k, sy = dy*k;
+      stick.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -50%)`;
+      moveVec.x = sx / max;
+      moveVec.y = sy / max;
+    }
+
+    movePad.addEventListener("touchstart", (e)=>{
+      e.preventDefault();
+      const t = e.changedTouches[0];
+      moveActive = true;
+      const r = movePad.getBoundingClientRect();
+      moveBase.x = r.left + r.width/2;
+      moveBase.y = r.top + r.height/2;
+      setStick(t.clientX - moveBase.x, t.clientY - moveBase.y);
+    }, {passive:false});
+
+    movePad.addEventListener("touchmove", (e)=>{
+      e.preventDefault();
+      if (!moveActive) return;
+      const t = e.changedTouches[0];
+      setStick(t.clientX - moveBase.x, t.clientY - moveBase.y);
+    }, {passive:false});
+
+    movePad.addEventListener("touchend", (e)=>{
+      e.preventDefault();
+      moveActive = false;
+      moveVec.x = 0; moveVec.y = 0;
+      stick.style.transform = "translate(-50%, -50%)";
+    }, {passive:false});
+
+    let lookActive = false;
+    let lastLook = { x:0, y:0 };
+    const lookSensitivity = 0.0055;
+    function isRightHalf(x){ return x > window.innerWidth * 0.45; }
+
+    window.addEventListener("touchstart", (e)=>{
+      const t = e.changedTouches[0];
+      if (!isRightHalf(t.clientX)) return;
+      lookActive = true;
+      lastLook.x = t.clientX;
+      lastLook.y = t.clientY;
+    }, {passive:true});
+
+    window.addEventListener("touchmove", (e)=>{
+      if (!lookActive) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - lastLook.x;
+      const dy = t.clientY - lastLook.y;
+      lastLook.x = t.clientX; lastLook.y = t.clientY;
+
+      player.yaw   -= dx * lookSensitivity;
+      player.pitch -= dy * lookSensitivity;
+      const limit = Math.PI/2 - 0.05;
+      player.pitch = Math.max(-limit, Math.min(limit, player.pitch));
+    }, {passive:true});
+
+    window.addEventListener("touchend", ()=>{ lookActive=false; }, {passive:true});
+    window.addEventListener("touchcancel", ()=>{ lookActive=false; }, {passive:true});
+
+    let sprintHeld = false;
+    document.getElementById("sprintBtn").addEventListener("touchstart",(e)=>{ e.preventDefault(); sprintHeld=true; toast("Sprint ON",700); },{passive:false});
+    document.getElementById("sprintBtn").addEventListener("touchend",(e)=>{ e.preventDefault(); sprintHeld=false; toast("Sprint OFF",600); },{passive:false});
+
+    document.getElementById("jumpBtn").addEventListener("touchstart",(e)=>{
+      e.preventDefault();
+      if (player.canJump){ player.velY = 6.4; player.canJump = false; }
+    },{passive:false});
+
+    document.getElementById("useBtn").addEventListener("touchstart",(e)=>{
+      e.preventDefault();
+      const t = getInteractTarget();
+      if (t) t.interact();
+      else toast("Nothing to interact with");
+    },{passive:false});
+
+    let running = false;
+    startBtn.addEventListener("click", ()=>{
+      overlayEl.style.display = "none";
+      running = true;
+      statusEl.textContent = "Move with joystick • Look by swiping • USE to interact";
+      toast("Loaded. Walk up to a slot and tap USE.", 1300);
+    });
+
+    const clock = new THREE.Clock();
+    function animate(){
+      requestAnimationFrame(animate);
+      const dt = Math.min(0.033, clock.getDelta());
+      for (const it of interactables) it.update(dt);
+
+      if (running){
+        const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), player.yaw);
+        const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), player.pitch);
+        camera.quaternion.copy(qYaw).multiply(qPitch);
+
+        const speed = sprintHeld ? 6.2 : 4.2;
+
+        const forwardAmt = -moveVec.y;
+        const strafeAmt  = moveVec.x;
+
+        const forward = new THREE.Vector3(0,0,-1).applyQuaternion(qYaw).normalize();
+        const right   = new THREE.Vector3(1,0,0).applyQuaternion(qYaw).normalize();
+
+        const move = new THREE.Vector3()
+          .addScaledVector(forward, forwardAmt)
+          .addScaledVector(right, strafeAmt);
+
+        if (move.lengthSq() > 1e-6) move.normalize().multiplyScalar(speed * dt);
+
+        const gravity = 18.0;
+        player.velY -= gravity * dt;
+
+        let next = player.pos.clone();
+        next.x += move.x;
+        next.z += move.z;
+        next.y += player.velY * dt;
+
+        if (next.y < 1.65){
+          next.y = 1.65;
+          player.velY = 0;
+          player.canJump = true;
+        }
+
+        const slid = collideAndSlide(next);
+        player.pos.set(slid.x, next.y, slid.z);
+        camera.position.copy(player.pos);
+
+        const t = getInteractTarget();
+        if (t){
+          statusEl.textContent = t.type === "slot" ? `Slot ${t.id} • Tap USE`
+            : t.type === "door" ? `${t.id} Door • Tap USE`
+            : `${t.id} Switch • Tap USE`;
+        } else {
+          statusEl.textContent = "Move • Swipe to look • Tap USE near objects";
+        }
+      }
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener("resize", ()=>{
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
